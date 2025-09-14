@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/template"
+	"time"
 
 	"github.com/natefinch/atomic"
 	log "github.com/sirupsen/logrus"
@@ -99,6 +101,8 @@ var (
 	latestFlag         = false
 	newestFlag         = false
 	saveAppend         = false
+	noUseless          = false
+	noFreeOnly         = false
 	maxTorrents        = int64(0)
 	minSeeders         = int64(0)
 	maxSeeders         = int64(0)
@@ -115,6 +119,7 @@ var (
 	maxTotalSizeStr    = ""
 	freeTimeAtLeastStr = ""
 	publishedAfterStr  = ""
+	publishedBeforeStr = ""
 	startPage          = ""
 	downloadDir        = ""
 	baseUrl            = ""
@@ -147,6 +152,10 @@ func init() {
 	command.Flags().BoolVarP(&noPaid, "no-paid", "", false, "Skip paid (cost bonus points) torrent")
 	command.Flags().BoolVarP(&noNeutral, "no-neutral", "", false,
 		"Skip neutral (do not count uploading & downloading & seeding bonus) torrent")
+	command.Flags().BoolVarP(&noUseless, "no-useless", "", false,
+		"Skip torrent that is useless (snatched < 3*seeders)")
+	command.Flags().BoolVarP(&noFreeOnly, "no-free", "", false,
+		"Skip free torrent")
 	command.Flags().BoolVarP(&largestFlag, "largest", "l", false,
 		`Sort site torrents by size in desc order. Equivalent to "--sort size --order desc"`)
 	command.Flags().BoolVarP(&latestFlag, "latest", "L", false,
@@ -185,6 +194,8 @@ func init() {
 		`Used with "--free". Set the allowed minimal remaining torrent free time. e.g. 12h, 1d`)
 	command.Flags().StringVarP(&publishedAfterStr, "published-after", "", "",
 		`If set, only display or download torrent that was published after (>=) this. `+constants.HELP_ARG_TIMES)
+	command.Flags().StringVarP(&publishedBeforeStr, "published-before", "", "",
+		`If set, only display or download torrent that was published before (<) this (mins). `+constants.HELP_ARG_TIMES)
 	command.Flags().StringVarP(&filter, "filter", "", "",
 		"If set, only display or download torrent which title or subtitle contains this string")
 	command.Flags().StringVarP(&tag, "tag", "", "",
@@ -297,12 +308,23 @@ func batchdl(command *cobra.Command, args []string) error {
 		freeTimeAtLeast = t
 	}
 	var publishedAfter int64
+	var publishedBefore int64
 	if publishedAfterStr != "" {
 		publishedAfter, err = util.ParseTime(publishedAfterStr, nil)
 		if err != nil {
 			return fmt.Errorf("invalid published-after: %w", err)
 		}
 	}
+	if publishedBeforeStr != "" {
+		// publishedBeforeStr的单位是分钟，与当前时间做差
+		var now = time.Now().Unix()
+		var minutes, err = strconv.ParseInt(publishedBeforeStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid published-before: %w", err)
+		}
+		publishedBefore = now - minutes*60
+	}
+
 	if nohr && siteInstance.GetSiteConfig().GlobalHnR {
 		log.Errorf("No torrents will be downloaded: site %s enforces global HnR policy",
 			siteInstance.GetName(),
@@ -451,6 +473,16 @@ mainloop:
 					continue
 				}
 			}
+			// 忽略一段时间内发布的种子
+			if publishedBefore > 0 && torrent.Time > publishedBefore {
+				log.Debugf("Skip torrent %s due to too new", torrent.Name)
+				if sortFlag == "time" && !desc {
+					break mainloop
+				} else {
+					continue
+				}
+			}
+
 			if !onlyDownloaded && !includeDownloaded && torrent.IsActive {
 				log.Debugf("Skip active torrent %s", torrent.Name)
 				continue
@@ -475,6 +507,14 @@ mainloop:
 					continue
 				}
 			}
+			// 忽略做种人数是完成人数的三倍及以上，且做种数量大于30人
+			if noUseless && torrent.Seeders > 30 &&
+				(3*(torrent.Snatched+1) < (torrent.Seeders+1) || torrent.Snatched == 0) {
+				log.Debugf("Skip torrent %s due to useless, snatched=%d, seeders=%d",
+					torrent.Name, torrent.Snatched, torrent.Seeders)
+				continue
+			}
+
 			if filter != "" && !torrent.MatchFilter(filter) {
 				log.Debugf("Skip torrent %s due to filter %s does NOT match", torrent.Name, filter)
 				continue
@@ -491,6 +531,13 @@ mainloop:
 				log.Debugf("Skip torrent %s due to includes does NOT match", torrent.Name)
 				continue
 			}
+			if noFreeOnly {
+				if torrent.DownloadMultiplier != 1 {
+					percent := torrent.DownloadMultiplier * 100
+					log.Debugf("Skip %.0f%% (×%.1f) download multiplier torrent %s", percent, torrent.DownloadMultiplier, torrent.Name)
+				}
+			}
+
 			if freeOnly {
 				if torrent.DownloadMultiplier != 0 {
 					log.Debugf("Skip non-free torrent %s", torrent.Name)

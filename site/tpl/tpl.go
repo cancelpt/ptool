@@ -457,6 +457,15 @@ https://www.dmm.co.jp/dc/doujin/-/detail/=/cid={{number | regex_search("\\bd_\\d
 			SelectorTorrentNeutral: `img.pro_nl`,
 			Comment:                "朋友、月月",
 		},
+		"springsunday": {
+			Type:                         "nexusphp",
+			Aliases:                      []string{"ssd"},
+			Url:                          "https://springsunday.net",
+			Comment:                      "春天",
+			SelectorTorrentNeutral:       `*[title^="中性"]`,
+			SelectorTorrentCurrentActive: `*[title^="做种中"], *[title^="下载中"]`,
+			SelectorTorrentActive:        `*[title^="做种中"], *[title^="下载中"], *[title^="未活动"]`,
+		},
 		"kufei": {
 			Type:    "nexusphp",
 			Url:     "https://kufei.org/",

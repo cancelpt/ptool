@@ -1,27 +1,104 @@
-name: release
+name: Release Build
 
 on:
   push:
-    tags:
+    tags: 
       - "v*"
 
 jobs:
-  release:
+  build-release:
+    name: Build Stripped Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+      fail-fast: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version-file: go.mod
+        cache: true
+    
+    - name: Build stripped binary
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        PACKAGE_NAME="ptool-v${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+        PACKAGE_DIR="dist/${PACKAGE_NAME}"
+        
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          OUTPUT_FILE="ptool.exe"
+        else
+          OUTPUT_FILE="ptool"
+        fi
+        
+        CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+        go build \
+          -v \
+          -trimpath \
+          -ldflags="-s -w -X main.version=${VERSION}" \
+          -o "${OUTPUT_FILE}"
+        
+        mkdir -p "${PACKAGE_DIR}"
+        mv "${OUTPUT_FILE}" "${PACKAGE_DIR}/"
+        
+        echo "PACKAGE_DIR=${PACKAGE_DIR}" >> $GITHUB_ENV
+        echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+    
+    - name: Package release
+      run: |
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          cd "dist"
+          zip -r "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}"
+          cd ..
+          ASSET_PATH="dist/${PACKAGE_NAME}.zip"
+        else
+          tar -czf "dist/${PACKAGE_NAME}.tar.gz" -C "$(dirname "${PACKAGE_DIR}")" "${PACKAGE_NAME}"
+          ASSET_PATH="dist/${PACKAGE_NAME}.tar.gz"
+        fi
+        
+        echo "ASSET_PATH=${ASSET_PATH}" >> $GITHUB_ENV
+    
+    - name: Upload assets
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-binary-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: ${{ env.ASSET_PATH }}
+
+  create-release:
+    name: Create Release
+    needs: build-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
+          path: combined-dist
+          pattern: release-binary-*
+          merge-multiple: true
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          go-version-file: go.mod
-          cache: true
-
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          args: release --clean
+          tag_name: ${{ github.ref }}
+          name: "${{ github.ref_name }}"
+          files: combined-dist/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 自動で生成されるシークレット
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

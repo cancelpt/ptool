@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	VersionSuffix = "DEV" // e.g. DEV
+	VersionSuffix = "DEV-cancelpt" // e.g. DEV
 	VersionTag    = "v0.1.11"
 	Version       = ""
 	Commit        = constants.NONE

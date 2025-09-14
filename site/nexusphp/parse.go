@@ -19,7 +19,7 @@ import (
 const (
 	SELECTOR_TORRENT               = `a[href^="download.php?"],a[href^="download?"]`
 	SELECTOR_DOWNLOAD_LINK         = `a[href^="download.php?"],a[href^="download?"]`
-	SELECTOR_DETAILS_LINK          = `a[href^="details.php?"],a[href^="details_"]`
+	SELECTOR_DETAILS_LINK          = `a[href^="details.php?"],a[href^="details_"],a[href^="detailsgame.php?"]`
 	SELECTOR_TORRENTS_LIST_DEFAULT = `table.torrents > tbody`
 	// xiaomlove/nexusphp paid torrent feature.
 	// see https://github.com/xiaomlove/nexusphp/blob/php8/app/Repositories/TorrentRepository.php .
@@ -444,6 +444,10 @@ func parseTorrents(doc *goquery.Document, option *TorrentsParserOption,
 		} else if domCheckTextTagExisting(s, "2xfree") {
 			downloadMultiplier = 0
 			uploadMultiplier = 2
+		} else if s.Find(`*[title=50%]`).Length() > 0 || domCheckTextTagExisting(s, "50%") {
+			downloadMultiplier = 0.5
+		} else if s.Find(`*[title=30%]`).Length() > 0 || domCheckTextTagExisting(s, "30%") {
+			downloadMultiplier = 0.3
 		} else if option.selectorTorrentFree != "" && s.Find(option.selectorTorrentFree).Length() > 0 {
 			downloadMultiplier = 0
 		}
@@ -457,6 +461,8 @@ func parseTorrents(doc *goquery.Document, option *TorrentsParserOption,
 		} else if option.selectorTorrentNoTraffic != "" && s.Find(option.selectorTorrentNoTraffic).Length() > 0 {
 			downloadMultiplier = 0
 			uploadMultiplier = 0
+		} else if s.Find(`*[title^="中性"]`).Length() > 0 || domCheckTextTagExisting(s, "中性") {
+			neutral = true
 		}
 		if s.Find(`*[title^="seeding"],*[title^="leeching"],*[title^="downloading"],*[title^="uploading"]`).Length() > 0 {
 			isActive = true
